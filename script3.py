@@ -1,33 +1,6 @@
 import streamlit as st
 import subprocess
-import psutil
-import os
 import time
-from pathlib import Path
-
-def is_port_in_use(port):
-    """Check if a port is in use"""
-    for proc in psutil.process_iter(['pid', 'name', 'connections']):
-        try:
-            for conn in proc.connections():
-                if conn.laddr.port == port:
-                    return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    return False
-
-def kill_process_on_port(port):
-    """Kill any process running on the specified port"""
-    for proc in psutil.process_iter(['pid', 'name', 'connections']):
-        try:
-            for conn in proc.connections():
-                if conn.laddr.port == port:
-                    psutil.Process(proc.pid).kill()
-                    time.sleep(1)  # Wait for the process to be killed
-                    return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            continue
-    return False
 
 # Initialize session state variables
 if 'process' not in st.session_state:
@@ -42,63 +15,51 @@ st.write("Control your ASReview Lab instance from this Streamlit app.")
 # Server status indicator
 status_placeholder = st.empty()
 
-# Control buttons columns
-col1, col2 = st.columns(2)
+# Start button
+if st.button('Start ASReview Lab', disabled=st.session_state.server_running):
+    try:
+        # Start the ASReview Lab process
+        process = subprocess.Popen(
+            ["asreview", "lab"],
+            shell=False
+        )
+        
+        # Store the process in session state
+        st.session_state.process = process
+        st.session_state.server_running = True
+        
+        # Wait a moment for the server to start
+        time.sleep(3)
+        
+        # Show success message
+        st.success("ASReview Lab has started successfully!")
+        
+        # Display the link
+        st.markdown("[Open ASReview Lab in new tab](http://localhost:5000)", unsafe_allow_html=True)
+        
+    except Exception as e:
+        st.error(f"Failed to start ASReview Lab: {str(e)}")
+        st.session_state.server_running = False
 
-with col1:
-    # Start button
-    if st.button('Start ASReview Lab', disabled=st.session_state.server_running):
+# Stop button
+if st.button('Stop ASReview Lab', disabled=not st.session_state.server_running):
+    if st.session_state.process:
         try:
-            # First check if port is already in use
-            if is_port_in_use(5000):
-                kill_process_on_port(5000)
-                time.sleep(1)
+            # Terminate the process
+            st.session_state.process.terminate()
             
-            # Start the ASReview Lab process
-            process = subprocess.Popen(
-                ["asreview", "lab"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
+            # Wait for the process to terminate
+            st.session_state.process.wait(timeout=5)
             
-            # Store the process in session state
-            st.session_state.process = process
-            st.session_state.server_running = True
-            
-            # Wait a moment for the server to start
-            time.sleep(3)
+            # Clean up the session state
+            st.session_state.process = None
+            st.session_state.server_running = False
             
             # Show success message
-            st.success("ASReview Lab has started successfully!")
-            
-            # Display the link
-            st.markdown("[Open ASReview Lab in new tab](http://localhost:5000)", unsafe_allow_html=True)
+            st.success("ASReview Lab has been stopped successfully!")
             
         except Exception as e:
-            st.error(f"Failed to start ASReview Lab: {str(e)}")
-            st.session_state.server_running = False
-
-with col2:
-    # Stop button
-    if st.button('Stop ASReview Lab', disabled=not st.session_state.server_running):
-        if st.session_state.process:
-            try:
-                # Kill the process and its children
-                parent = psutil.Process(st.session_state.process.pid)
-                for child in parent.children(recursive=True):
-                    child.kill()
-                parent.kill()
-                
-                # Clean up the session state
-                st.session_state.process = None
-                st.session_state.server_running = False
-                
-                # Show success message
-                st.success("ASReview Lab has been stopped successfully!")
-                
-            except Exception as e:
-                st.error(f"Failed to stop ASReview Lab: {str(e)}")
+            st.error(f"Failed to stop ASReview Lab: {str(e)}")
 
 # Update status indicator
 if st.session_state.server_running:
@@ -117,15 +78,3 @@ with st.expander("How to use ASReview Lab"):
     
     Note: If you encounter any issues, try stopping and restarting the server.
     """)
-
-# Display process output for debugging (optional)
-if st.session_state.server_running and st.session_state.process:
-    with st.expander("Server Logs"):
-        try:
-            output, error = st.session_state.process.communicate(timeout=0.1)
-            if output:
-                st.code(output)
-            if error:
-                st.error(error)
-        except subprocess.TimeoutExpired:
-            pass
