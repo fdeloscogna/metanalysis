@@ -1,23 +1,16 @@
 import streamlit as st
 import subprocess
 import time
-import socket
 import requests
+import os
+from pathlib import Path
 
 def check_server_running(url="http://localhost:5000"):
     try:
-        response = requests.get(url)
+        response = requests.get(url, timeout=2)
         return response.status_code == 200
     except:
         return False
-
-def get_ip():
-    try:
-        hostname = socket.gethostname()
-        ip_address = socket.gethostbyname(hostname)
-        return ip_address
-    except:
-        return "localhost"
 
 # Initialize session state variables
 if 'process' not in st.session_state:
@@ -26,108 +19,131 @@ if 'server_running' not in st.session_state:
     st.session_state.server_running = False
 
 # Title and description
-st.title("ASReview Lab Interface")
-st.write("Control your ASReview Lab instance from this Streamlit app.")
+st.set_page_config(
+    page_title="ASReview Lab Launcher",
+    page_icon="🔍",
+    layout="centered"
+)
+
+st.title("🔍 ASReview Lab")
+st.markdown("""
+<style>
+    .stButton>button {
+        width: 100%;
+        height: 3em;
+        margin-top: 1em;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Server status indicator
 status_placeholder = st.empty()
 
-# Start button
-if st.button('Start ASReview Lab', disabled=st.session_state.server_running):
-    try:
-        # Start the ASReview Lab process with specific host binding
-        process = subprocess.Popen(
-            [
-                "asreview", "lab",
-                "--host", "0.0.0.0",  # Bind to all interfaces
-                "--port", "5000"
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        
-        # Store the process in session state
-        st.session_state.process = process
-        st.session_state.server_running = True
-        
-        # Wait a moment for the server to start
-        time.sleep(5)  # Increased wait time
-        
-        # Check if server is actually running
-        if check_server_running():
-            st.success("ASReview Lab has started successfully!")
-        else:
-            st.warning("Server started but might not be accessible yet. Please wait a few moments and try the link below.")
-        
-        # Display connection information
-        ip_address = get_ip()
-        st.markdown("### Connection Information")
-        st.markdown(f"""
-        Try accessing ASReview Lab using any of these links:
-        - [Local Access (localhost)](http://localhost:5000)
-        - [Network Access (IP)](http://{ip_address}:5000)
-        
-        If the links don't work immediately, please wait a few seconds and refresh the page.
-        """)
-        
-        # Display debug information in expander
-        with st.expander("Debug Information"):
-            st.write(f"Server IP: {ip_address}")
-            st.write("Server Port: 5000")
-            st.write(f"Full URL: http://{ip_address}:5000")
-            
-            # Try to get process output
-            try:
-                out, err = process.communicate(timeout=0.1)
-                if out:
-                    st.write("Server Output:", out.decode())
-                if err:
-                    st.write("Server Errors:", err.decode())
-            except subprocess.TimeoutExpired:
-                process.stdout.close()
-                process.stderr.close()
-                
-    except Exception as e:
-        st.error(f"Failed to start ASReview Lab: {str(e)}")
-        st.session_state.server_running = False
+# Main container for the app
+main_container = st.container()
 
-# Stop button
-if st.button('Stop ASReview Lab', disabled=not st.session_state.server_running):
-    if st.session_state.process:
+with main_container:
+    # Start button
+    if st.button('▶️ Launch ASReview Lab', disabled=st.session_state.server_running):
         try:
-            # Terminate the process
-            st.session_state.process.terminate()
+            # Create a data directory if it doesn't exist
+            data_dir = Path("asreview_data")
+            data_dir.mkdir(exist_ok=True)
             
-            # Wait for the process to terminate
-            st.session_state.process.wait(timeout=5)
+            # Start the ASReview Lab process
+            process = subprocess.Popen(
+                [
+                    "asreview", "lab",
+                    "--host", "0.0.0.0",
+                    "--port", "5000"
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True
+            )
             
-            # Clean up the session state
-            st.session_state.process = None
-            st.session_state.server_running = False
+            st.session_state.process = process
+            st.session_state.server_running = True
             
-            # Show success message
-            st.success("ASReview Lab has been stopped successfully!")
+            # Wait for server to start
+            with st.spinner('Starting ASReview Lab...'):
+                attempts = 0
+                while attempts < 10:
+                    if check_server_running():
+                        break
+                    time.sleep(1)
+                    attempts += 1
+            
+            st.success("✅ ASReview Lab is ready!")
+            
+            # Display the access link
+            st.markdown("""
+            ### 🌐 Access ASReview Lab
+            Click the link below to open ASReview Lab:
+            
+            [Open ASReview Lab](http://localhost:5000)
+            
+            Keep this tab open while using ASReview Lab.
+            """)
             
         except Exception as e:
-            st.error(f"Failed to stop ASReview Lab: {str(e)}")
+            st.error(f"❌ Error starting ASReview Lab: {str(e)}")
+            st.session_state.server_running = False
 
-# Update status indicator
-if st.session_state.server_running:
-    status_placeholder.success("Status: ASReview Lab is running")
-else:
-    status_placeholder.info("Status: ASReview Lab is not running")
+    # Stop button
+    if st.button('⏹️ Stop ASReview Lab', disabled=not st.session_state.server_running):
+        if st.session_state.process:
+            try:
+                # Terminate the process
+                st.session_state.process.terminate()
+                try:
+                    st.session_state.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    st.session_state.process.kill()
+                
+                st.session_state.process = None
+                st.session_state.server_running = False
+                
+                st.success("✅ ASReview Lab has been stopped!")
+                
+            except Exception as e:
+                st.error(f"❌ Error stopping ASReview Lab: {str(e)}")
 
-# Display additional information
-with st.expander("How to use ASReview Lab"):
-    st.write("""
-    1. Click 'Start ASReview Lab' to launch the server
-    2. Wait a few moments for the server to fully start
-    3. Try both the localhost and IP address links provided above
-    4. If the links don't work immediately, wait a few seconds and refresh the page
-    5. When finished, click 'Stop ASReview Lab' to shut down the server
-    
-    Troubleshooting:
-    - If you can't connect, try waiting 10-15 seconds and refreshing the page
-    - Make sure no other service is using port 5000
-    - Check the Debug Information section for more details
+    # Update status indicator
+    if st.session_state.server_running:
+        status_placeholder.success("📡 Status: ASReview Lab is running")
+    else:
+        status_placeholder.info("💤 Status: ASReview Lab is not running")
+
+    # Help section
+    with st.expander("ℹ️ Help & Information"):
+        st.write("""
+        **Quick Guide:**
+        1. Click 'Launch ASReview Lab' to start
+        2. Wait for the success message
+        3. Click the provided link to open ASReview Lab
+        4. When finished, return to this page and click 'Stop ASReview Lab'
+        
+        **Note:**
+        - Keep this tab open while using ASReview Lab
+        - All your ASReview projects will be saved automatically
+        - If you encounter any issues, try stopping and restarting ASReview Lab
+        """)
+
+    # Footer
+    st.markdown("---")
+    st.markdown(
+        """
+        <div style='text-align: center'>
+            <p>Built with ❤️ using Streamlit and ASReview</p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+requirements = st.sidebar.expander("📦 Requirements", expanded=False)
+with requirements:
+    st.code("""
+    streamlit==1.31.0
+    asreview==1.1.1
     """)
